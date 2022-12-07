@@ -1,0 +1,347 @@
+---
+title: "ProjectPrakDS"
+author: "Selvi"
+date: "2022-11-25"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(twitteR)
+library (tidyverse) # Data Science Tool
+library (tidytext) # Untuk Text Mining dan Preprocessing
+library (rtweet) # Untuk akses ke Twitter API
+library (wordcloud2) # Untuk membuat wordcloud
+library (graphTweets) # Untuk membuat objek graph/network 
+library (sigmajs) # Untuk memvisualisasikan graph/network
+library(vroom) #membaca data
+library(tm) #untuk cleaning text data
+library(tm) #library untuk penggunaan corpus dalam cleaning data
+library(RTextTools) #mengkalisifikasi text secara otomatis dengan supervised learning
+#library yang terdapat sebuah algoritma naivebayes
+library(e1071)
+library(dplyr)
+library(caret)
+library(syuzhet) #untuk membaca fungsi get_nrc
+library(shiny) #package shiny
+library(wordcloud)
+```
+
+2. Setup Auth
+```{r}
+api_key<- "hRKqGHwsKNXRsaR5lWzLMpACr"
+api_secret<- "6eWOmAvYU5eDFKnhgRLfMay6WTRgHRo12SI1u0wdxkATXK4AqK"
+access_token<- "1595781028207284224-Bi7Y4TH2Mj7JlGRFQVKlvJnvcGiRGe"
+access_token_secret<- "ugXhEySGmltdA5lDRPE332cvrGlyqArj9eURfrJGaKHJU"
+setup_twitter_oauth(api_key,api_secret,access_token,access_token_secret)
+```
+
+3. Scraping Data
+```{r}
+tw = searchTwitter ('pemerintah -filter:retweets', n = 2000, retryOnRateLimit = 2000, lang = "id")
+
+saveRDS(tw, file = 'tweetPemerintahan.rds')
+
+dataorigin <- do.call("rbind", lapply(tw, as.data.frame))
+
+write.csv(dataorigin, 'OriginTweetPemerintahan.csv')
+```
+
+4. Preprocessing Data
+```{r}
+#CLEANING DATA
+tw <- readRDS('tweetPemerintahan.rds')
+DataMentah = twListToDF(tw)
+
+#menampilkan semua tweet yang kita mining
+DataMentah2 <- DataMentah$text
+
+DataMentahCorpus <- Corpus(VectorSource(DataMentah2))
+
+##hapus URL
+removeURL <- function(x) gsub("http[^[:space:]]*", "", x)
+twitbersih <- tm_map(DataMentahCorpus, removeURL)
+
+##hapus New Line
+removeNL <- function(y) gsub("\n", "", y)
+twitbersih <- tm_map(twitbersih, removeNL)
+
+##hapus koma
+replacecomma <- function(y) gsub(",", "", y)
+
+##hapus retweet
+removeRT <- function(y) gsub("RT ", "", y)
+twitbersih <- tm_map(twitbersih, removeRT)
+
+##hapus titik
+removetitik2 <- function(y) gsub(":", "", y)
+twitbersih <- tm_map(twitbersih, removetitik2)
+
+##hapus titik koma
+removetitikkoma <- function(y) gsub(";", " ", y)
+twitbersih <- tm_map(twitbersih, removetitikkoma)
+
+#hapus titik3
+removetitik3 <- function(y) gsub("p.", "", y)
+twitbersih <- tm_map(twitbersih, removetitik3)
+
+#hapus &amp
+removeamp <- function(y) gsub("&amp;", "", y)
+twitbersih <- tm_map(twitbersih, removeamp)
+
+#hapus Mention
+removeUN <- function(z) gsub("@\\w+", "", z)
+twitbersih <- tm_map(twitbersih, removeUN)
+
+#hapus space dll
+remove.all <- function(xy) gsub("[^[:alpha:][:space:]]*", "", xy)
+twitbersih <-tm_map(twitbersih,stripWhitespace)
+inspect(twitbersih[1:20])
+twitbersih <- tm_map(twitbersih,remove.all)
+twitbersih <- tm_map(twitbersih, removePunctuation) #tanda baca
+twitbersih <- tm_map(twitbersih, tolower) #mengubah huruf kecil
+
+myStopwords <- readLines("stopwords-id.txt", warn = FALSE)
+twitbersih <- tm_map(twitbersih,removeWords,myStopwords)
+twitbersih <- tm_map(twitbersih, removeWords, c('xixixi','LGBT','cc','c','mimn','anjink','ahhhh'))
+
+#HAPUS DATA KOSONG
+try.error = function(x)
+{
+  # create missing value
+  y = NA
+  # tryCatch error
+  try_error = tryCatch(tolower(x), error=function(e) e)
+  # if not an error
+  if (!inherits(try_error, "error"))
+    y = tolower(x)
+  # result
+  return(y)
+}
+
+# lower case using try.error with sapply 
+twitbersih = sapply(twitbersih, try.error)
+
+# remove NAs in some_txt
+twitbersih = twitbersih[!is.na(twitbersih)]
+names(twitbersih) = NULL
+
+# dataframe data yg sudah bersih
+dataframe<-data.frame(text=unlist(sapply(twitbersih, `[`)), stringsAsFactors=F)
+View(dataframe)
+write.csv(dataframe,'TweetPemerintahan.csv')
+```
+
+5. Data Labelling
+```{r}
+SemuaKomen <- read.csv("TweetPemerintahan.csv", header = TRUE)
+
+#skoring
+kata.positif <- scan("positive-words.txt",what="character",comment.char=";")
+kata.negatif <- scan("negative-words.txt",what="character",comment.char=";")
+score.sentiment = function(SemuaKomen, kata.positif, kata.negatif,
+                           .progress='none')
+{
+  require(stringr)
+  scores = laply(SemuaKomen, function(kalimat, kata.positif,
+                                    kata.negatif) {
+    kalimat = gsub('[[:punct:]]', '', kalimat)
+    kalimat = gsub('[[:cntrl:]]', '', kalimat)
+    kalimat = gsub('\\d+', '', kalimat)
+    kalimat = tolower(kalimat)
+    list.kata = str_split(kalimat, '\\s+')
+    kata2 = unlist(list.kata)
+    positif.matches = match(kata2, kata.positif)
+    negatif.matches = match(kata2, kata.negatif)
+    positif.matches = !is.na(positif.matches)
+    negatif.matches = !is.na(negatif.matches)
+    score = sum(positif.matches) - (sum(negatif.matches))
+    return(score)
+  }, kata.positif, kata.negatif, .progress=.progress )
+  scores.df = data.frame(score=scores, text=SemuaKomen)
+  return(scores.df)}
+
+hasil = score.sentiment(SemuaKomen$text, kata.positif, kata.negatif)
+#mengubah nilai score menjadi sentimen
+hasil$klasifikasi<- ifelse(hasil$score<0, "Negatif",ifelse(hasil$score==0,"Netral","Positif"))
+
+#menukar urutan kolom
+data <- hasil[c(3,1,2)]
+
+#View(data)
+write.csv(data, file = "datalabel.csv")
+```
+
+#menghilangkan data yang sebagian besar nilainya nol
+```{r}
+dtm = DocumentTermMatrix(datas$text) 
+dtm 
+dim(dtm) 
+dtm = removeSparseTerms(dtm, 0.999) 
+dim(dtm)
+```
+
+```{r}
+convert <- function(x) {
+y <- ifelse(x > 0, 1,0)
+y <- factor(y, levels=c(0,1), labels=c("No", "Yes"))
+y
+    }  
+    
+    datanaive = apply(dtm, 2, convert)
+    
+    dataset = as.data.frame(as.matrix(datanaive))    
+    dataset$Class = as.factor(datas$klasifikasi)
+    str(dataset$Class)
+```
+
+
+
+```{r}
+data=read.csv("datalabel.csv")
+#melihat 6 data teratas dari datalabel.csv
+head(data)
+library(tidyverse) 
+datas = data %>% select(text,klasifikasi)
+
+#melihat 6 data teratas dari kolom text dan klasifikasi pada datalabel.csv
+head(datas)
+
+#presentase setiap label klasifikasi
+round(prop.table(table(datas$klasifikasi)),2)
+```
+
+
+6. Visualisasi Data Setelah Labelling
+```{r}
+library(wordcloud) 
+library(ggplot2) 
+#wordcloud 
+require (RColorBrewer)
+
+positive <- subset(datas,klasifikasi=="Positif")
+wordcloud(positive$text, max.words = 100, colors = "green")
+
+negative <- subset(datas,klasifikasi=="Negatif") 
+wordcloud(negative$text, max.words = 100, colors = "red") 
+
+netral <- subset(datas,klasifikasi=="Netral") 
+wordcloud(netral$text, max.words = 100, colors = "blue")
+```
+
+
+7. Split data menjadi data training dan data testing dengan presentase 75% dan 25%
+```{r}
+set.seed(31)
+    split = sample(2,nrow(dataset),prob = c(0.75,0.25),replace = TRUE)
+    train_set = dataset[split == 1,]
+    test_set = dataset[split == 2,] 
+    
+    prop.table(table(train_set$Class))
+    prop.table(table(test_set$Class))
+```
+
+
+8.Melakukan klasifikasi naive bayes menggunakan data training
+```{r}
+    library(e1071)
+    library(caret)
+    control= trainControl(method="repeatedcv", number=10, repeats=2)
+    system.time( classifier_nb <- naiveBayes(train_set, train_set$Class, laplace = 1,trControl = control,tuneLength = 7) )
+```
+
+
+9. Evaluasi Model klasifikasi menggunakan data testing
+```{r}
+
+    nb_pred = predict(classifier_nb, type = 'class', newdata =  test_set)
+    confusionMatrix(nb_pred,test_set$Class)
+```
+
+10. Menampilkan data klasifikasi, Bar Plot, dan Wordcloud pada GUI shinny
+```{r}
+ui <- fluidPage(
+    titlePanel("Sentiment Analysis Pemerintah Indonesia di Twitter"),
+        mainPanel(
+            
+            tabsetPanel(type = "tabs",
+                        #Bar Plot
+                        tabPanel("Bar Plot", plotOutput("scatterplot")), 
+                        # Plot
+                        tabPanel("Data", DT::dataTableOutput('tbl1')),
+                        # Output Data Dalam Tabel
+                        tabPanel("Wordcloud", plotOutput("Wordcloud"))
+                        )
+        )
+    )
+
+# SERVER
+server <- function(input, output) {
+    
+    # Output Data
+  output$tbl1 = DT::renderDataTable({
+    datatabel <-read.csv("datalabel.csv",stringsAsFactors = FALSE)
+    DT::datatable(datatabel, options= list(lengthChange = FALSE))
+    })
+    
+    #output Bar Plot
+  output$scatterplot <- renderPlot({
+    d<-read.csv("datalabel.csv",stringsAsFactors = FALSE) 
+    barchart(d$klasifikasi, 
+         horizontal = FALSE, 
+         main = "Sentiment Analysis", 
+         xlab = "Klasifikasi",
+         ylab = "Frequency", 
+         col = "darkgreen")
+    }, height=400)
+    
+    #output wordcloud
+  output$Wordcloud <- renderPlot({
+    require (corpus)
+    df<-read.csv("TweetPemerintahan.csv",stringsAsFactors = FALSE)
+    glimpse(df)
+    set.seed(20)
+    df<-df[sample(nrow(df)),]
+    df<-df[sample(nrow(df)),]
+    glimpse(df)
+    corpus<-Corpus(VectorSource(df$text))
+    corpus
+
+  #fungsinya untuk membersihkan data data yang tidak dibutuhkan 
+  corpus.clean<-corpus%>%
+    tm_map(content_transformer(tolower))%>%
+    tm_map(removePunctuation)%>%
+    tm_map(removeNumbers)%>%
+    tm_map(removeWords, c("wkwk", "tolol", "oyen"))%>%
+    #tm_map(removeWords,stopwords(kind="id"))%>%
+    tm_map(stripWhitespace)
+  
+    wordcloud(corpus.clean,min.freq = 4,max.words=100,random.order=F,colors=brewer.pal(8,"Dark2"))
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
